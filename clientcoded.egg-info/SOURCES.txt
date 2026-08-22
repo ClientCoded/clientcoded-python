@@ -1,0 +1,9 @@
+README.md
+setup.py
+clientcoded/__init__.py
+clientcoded/trace.py
+clientcoded.egg-info/PKG-INFO
+clientcoded.egg-info/SOURCES.txt
+clientcoded.egg-info/dependency_links.txt
+clientcoded.egg-info/requires.txt
+clientcoded.egg-info/top_level.txt
