@@ -2,15 +2,37 @@ from setuptools import setup, find_packages
 
 setup(
     name="clientcoded",
-    version="0.2.0",
-    description="ClientCoded SDK - Trace your AI agent's tool calls for root cause analysis",
+    version="0.3.0",
+    description="ClientCoded SDK - AI agent testing, tracing, and root cause analysis. Built on OpenInference.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="ClientCoded",
     author_email="travis@clientcoded.com",
     url="https://github.com/ClientCoded/clientcoded-python",
     packages=find_packages(),
-    install_requires=["requests>=2.20.0"],
+    install_requires=[
+        "requests>=2.20.0",
+        "opentelemetry-api>=1.20.0",
+        "opentelemetry-sdk>=1.20.0",
+    ],
+    extras_require={
+        "langchain": ["openinference-instrumentation-langchain"],
+        "openai": ["openinference-instrumentation-openai"],
+        "anthropic": ["openinference-instrumentation-anthropic"],
+        "llama-index": ["openinference-instrumentation-llama-index"],
+        "crewai": ["openinference-instrumentation-crewai"],
+        "dspy": ["openinference-instrumentation-dspy"],
+        "bedrock": ["openinference-instrumentation-bedrock"],
+        "all": [
+            "openinference-instrumentation-langchain",
+            "openinference-instrumentation-openai",
+            "openinference-instrumentation-anthropic",
+            "openinference-instrumentation-llama-index",
+            "openinference-instrumentation-crewai",
+            "openinference-instrumentation-dspy",
+            "openinference-instrumentation-bedrock",
+        ],
+    },
     python_requires=">=3.8",
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -19,5 +41,5 @@ setup(
         "Programming Language :: Python :: 3",
         "Topic :: Software Development :: Testing",
     ],
-    keywords="ai agent testing qa tracing evaluation langchain openai anthropic",
+    keywords="ai agent testing qa tracing evaluation openinference opentelemetry langchain openai anthropic",
 )

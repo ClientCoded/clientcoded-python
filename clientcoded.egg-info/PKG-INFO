@@ -1,11 +1,11 @@
 Metadata-Version: 2.4
 Name: clientcoded
-Version: 0.2.0
-Summary: ClientCoded SDK - Trace your AI agent's tool calls for root cause analysis
+Version: 0.3.0
+Summary: ClientCoded SDK - AI agent testing, tracing, and root cause analysis. Built on OpenInference.
 Home-page: https://github.com/ClientCoded/clientcoded-python
 Author: ClientCoded
 Author-email: travis@clientcoded.com
-Keywords: ai agent testing qa tracing evaluation langchain openai anthropic
+Keywords: ai agent testing qa tracing evaluation openinference opentelemetry langchain openai anthropic
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Developers
 Classifier: License :: OSI Approved :: MIT License
@@ -14,6 +14,30 @@ Classifier: Topic :: Software Development :: Testing
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 Requires-Dist: requests>=2.20.0
+Requires-Dist: opentelemetry-api>=1.20.0
+Requires-Dist: opentelemetry-sdk>=1.20.0
+Provides-Extra: langchain
+Requires-Dist: openinference-instrumentation-langchain; extra == "langchain"
+Provides-Extra: openai
+Requires-Dist: openinference-instrumentation-openai; extra == "openai"
+Provides-Extra: anthropic
+Requires-Dist: openinference-instrumentation-anthropic; extra == "anthropic"
+Provides-Extra: llama-index
+Requires-Dist: openinference-instrumentation-llama-index; extra == "llama-index"
+Provides-Extra: crewai
+Requires-Dist: openinference-instrumentation-crewai; extra == "crewai"
+Provides-Extra: dspy
+Requires-Dist: openinference-instrumentation-dspy; extra == "dspy"
+Provides-Extra: bedrock
+Requires-Dist: openinference-instrumentation-bedrock; extra == "bedrock"
+Provides-Extra: all
+Requires-Dist: openinference-instrumentation-langchain; extra == "all"
+Requires-Dist: openinference-instrumentation-openai; extra == "all"
+Requires-Dist: openinference-instrumentation-anthropic; extra == "all"
+Requires-Dist: openinference-instrumentation-llama-index; extra == "all"
+Requires-Dist: openinference-instrumentation-crewai; extra == "all"
+Requires-Dist: openinference-instrumentation-dspy; extra == "all"
+Requires-Dist: openinference-instrumentation-bedrock; extra == "all"
 Dynamic: author
 Dynamic: author-email
 Dynamic: classifier
@@ -21,6 +45,7 @@ Dynamic: description
 Dynamic: description-content-type
 Dynamic: home-page
 Dynamic: keywords
+Dynamic: provides-extra
 Dynamic: requires-dist
 Dynamic: requires-python
 Dynamic: summary
