@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="clientcoded",
-    version="0.1.0",
+    version="0.2.0",
     description="ClientCoded SDK - Trace your AI agent's tool calls for root cause analysis",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
@@ -17,12 +17,7 @@ setup(
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
         "Topic :: Software Development :: Testing",
     ],
-    keywords="ai agent testing qa tracing evaluation",
+    keywords="ai agent testing qa tracing evaluation langchain openai anthropic",
 )
