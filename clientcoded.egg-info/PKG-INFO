@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: clientcoded
-Version: 0.3.0
+Version: 0.4.0
 Summary: ClientCoded SDK - AI agent testing, tracing, and root cause analysis. Built on OpenInference.
 Home-page: https://github.com/ClientCoded/clientcoded-python
 Author: ClientCoded

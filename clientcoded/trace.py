@@ -31,6 +31,8 @@ import contextvars
 _conversation_id = contextvars.ContextVar('conversation_id', default=None)
 _turn = contextvars.ContextVar('turn', default=None)
 
+from .context import get_test_context
+
 
 # ============================================================
 # ClientCoded Span Exporter
@@ -96,6 +98,8 @@ class ClientCodedExporter(SpanExporter if HAS_OTEL else object):
                     'error': error,
                     'latency_ms': latency_ms,
                     'timestamp': time.time(),
+                    'test_run_id': get_test_context().get('test_run_id'),
+                    'question_index': get_test_context().get('question_index'),
                     'extra': {
                         'input_tokens': input_tokens,
                         'output_tokens': output_tokens,
@@ -411,7 +415,9 @@ def _send_direct_trace(trace_id, tool_name, input_data, output_data, error, late
         'output': _truncate(output_data) if output_data else None,
         'error': error,
         'latency_ms': latency_ms,
-        'timestamp': time.time()
+        'timestamp': time.time(),
+        'test_run_id': get_test_context().get('test_run_id'),
+        'question_index': get_test_context().get('question_index'),
     }
 
     thread = threading.Thread(

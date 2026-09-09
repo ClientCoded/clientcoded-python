@@ -10,8 +10,10 @@ from .trace import (
     auto_instrument,
     ClientCodedExporter,
 )
+from .context import extract_test_context, get_test_context, clear_test_context
+from .middleware import ClientCodedMiddleware, flask_before_request, flask_after_request
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "configure",
     "init",
@@ -23,4 +25,10 @@ __all__ = [
     "log_trace",
     "auto_instrument",
     "ClientCodedExporter",
+    "extract_test_context",
+    "get_test_context",
+    "clear_test_context",
+    "ClientCodedMiddleware",
+    "flask_before_request",
+    "flask_after_request",
 ]

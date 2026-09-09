@@ -1,6 +1,8 @@
 README.md
 setup.py
 clientcoded/__init__.py
+clientcoded/context.py
+clientcoded/middleware.py
 clientcoded/trace.py
 clientcoded.egg-info/PKG-INFO
 clientcoded.egg-info/SOURCES.txt
