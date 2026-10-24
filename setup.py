@@ -2,9 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
     name="clientcoded",
-    version="0.4.0",
+    version="0.5.0",
     description="ClientCoded SDK - AI agent testing, tracing, and root cause analysis. Built on OpenInference.",
-    long_description=open("README.md").read(),
+    long_description=open("README.md").read() if __import__("os").path.exists("README.md") else "",
     long_description_content_type="text/markdown",
     author="ClientCoded",
     author_email="travis@clientcoded.com",

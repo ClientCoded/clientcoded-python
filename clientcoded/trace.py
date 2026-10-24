@@ -1,10 +1,23 @@
-# ClientCoded Python SDK v0.3.0
+# ClientCoded Python SDK v0.5.0
 # Uses OpenInference (open standard) for tracing
 # pip install clientcoded
+#
+# 0.5.0
+#   * Traces go to https://api.clientcoded.com/traces by default (was the
+#     n8n AP-35 webhook). CLIENTCODED_TRACE_URL still overrides it.
+#   * Merges 0.4.0 (test-run tagging via x-clientcoded-context, middleware)
+#     with the GitHub improvements (tool.name, session id, retrieved docs).
+#   * Long inputs/outputs that get cut to 2,000 characters now say how long
+#     they were and, for lists/results, how many items they held, e.g.
+#     "... (truncated: 21,840 characters, 128 rows)".
+#   * If ClientCoded rejects traces (bad API key, wrong agent, rate limit),
+#     the SDK logs one warning per reason instead of failing silently.
+#     It still never raises into the customer's agent.
 
 import os
 import time
 import uuid
+import logging
 import threading
 import functools
 import requests
@@ -19,8 +32,11 @@ except ImportError:
 
 CLIENTCODED_API = os.environ.get(
     "CLIENTCODED_TRACE_URL",
-    "https://clientcoded.app.n8n.cloud/webhook/ap-35-trace-ingest"
+    "https://api.clientcoded.com/traces"
 )
+
+_log = logging.getLogger("clientcoded")
+_warned = set()
 
 _config = {
     'agent_id': None,
@@ -28,20 +44,20 @@ _config = {
 }
 
 import contextvars
+from .context import get_test_context
+
 _conversation_id = contextvars.ContextVar('conversation_id', default=None)
 _turn = contextvars.ContextVar('turn', default=None)
-
-from .context import get_test_context
 
 
 # ============================================================
 # ClientCoded Span Exporter
-# Converts OpenTelemetry spans to ClientCoded trace format
-# and sends to AP-35
+# Converts OpenTelemetry/OpenInference spans to ClientCoded
+# trace format and sends them to the ClientCoded trace endpoint
 # ============================================================
 
 class ClientCodedExporter(SpanExporter if HAS_OTEL else object):
-    """Exports OpenTelemetry/OpenInference spans to ClientCoded AP-35."""
+    """Exports OpenTelemetry/OpenInference spans to ClientCoded."""
 
     def __init__(self, agent_id=None, api_key=None, endpoint=None):
         self.agent_id = agent_id or _config.get('agent_id')
@@ -53,21 +69,44 @@ class ClientCodedExporter(SpanExporter if HAS_OTEL else object):
             try:
                 attrs = dict(span.attributes) if span.attributes else {}
 
-                # Extract OpenInference semantic attributes
-                tool_name = (
-                    attrs.get('openinference.span.kind', '') + '.' +
-                    (span.name or 'unknown')
-                ).strip('.')
+                # Span kind
+                span_kind = attrs.get('openinference.span.kind', 'UNKNOWN')
 
-                # Extract input/output from OpenInference conventions
-                input_data = attrs.get('input.value', attrs.get('llm.input_messages', None))
-                output_data = attrs.get('output.value', attrs.get('llm.output_messages', None))
+                # Tool name (prefer tool.name, fall back to span name)
+                tool_name = attrs.get('tool.name', span.name or 'unknown')
+                if span_kind and span_kind != 'UNKNOWN':
+                    # Same naming as 0.4.0 ("LLM.Messages", "TOOL.run_sql")
+                    # so new traces match the ones already stored.
+                    tool_name = span_kind.upper() + '.' + tool_name
 
-                # Extract token counts
+                # Input (prefer structured, fall back to raw)
+                input_data = (
+                    attrs.get('input.value') or
+                    attrs.get('llm.input_messages') or
+                    None
+                )
+
+                # Output (prefer structured, fall back to raw)
+                output_data = (
+                    attrs.get('output.value') or
+                    attrs.get('llm.output_messages') or
+                    None
+                )
+
+                # Token counts
                 input_tokens = attrs.get('llm.token_count.prompt', None)
                 output_tokens = attrs.get('llm.token_count.completion', None)
 
-                # Extract error
+                # Model
+                model = attrs.get('llm.model_name', None)
+
+                # Retrieved documents (for RAG agents)
+                retrieved_docs = attrs.get('retrieval.documents', None)
+
+                # Session ID
+                session_id = attrs.get('session.id', None)
+
+                # Error
                 error = None
                 if span.status and span.status.status_code == otel_trace.StatusCode.ERROR:
                     error = span.status.description or 'Unknown error'
@@ -75,39 +114,45 @@ class ClientCodedExporter(SpanExporter if HAS_OTEL else object):
                     if event.name == 'exception':
                         error = dict(event.attributes).get('exception.message', error)
 
-                # Calculate latency
+                # Latency
                 latency_ms = None
                 if span.start_time and span.end_time:
                     latency_ms = int((span.end_time - span.start_time) / 1_000_000)
 
-                # Build parent trace ID
+                # Parent
                 parent_trace_id = None
                 if span.parent and span.parent.span_id:
                     parent_trace_id = format(span.parent.span_id, '016x')
 
+                ctx = get_test_context() or {}
                 payload = {
                     'agent_id': self.agent_id,
                     'api_key': self.api_key,
+                    'test_run_id': ctx.get('test_run_id'),
+                    'question_index': ctx.get('question_index'),
                     'trace_id': format(span.context.span_id, '016x'),
                     'parent_trace_id': parent_trace_id,
                     'conversation_id': _conversation_id.get(),
                     'turn': _turn.get(),
                     'tool_name': tool_name,
+                    # Usually already shortened (with a size note) by the
+                    # decorators; this only cuts auto-instrumented spans.
                     'input': _truncate(str(input_data)) if input_data else None,
                     'output': _truncate(str(output_data)) if output_data else None,
                     'error': error,
                     'latency_ms': latency_ms,
                     'timestamp': time.time(),
-                    'test_run_id': get_test_context().get('test_run_id'),
-                    'question_index': get_test_context().get('question_index'),
                     'extra': {
                         'input_tokens': input_tokens,
                         'output_tokens': output_tokens,
-                        'model': attrs.get('llm.model_name', None),
+                        'model': model,
+                        'span_kind': span_kind,
+                        'retrieved_docs': _truncate(str(retrieved_docs)) if retrieved_docs else None,
+                        'session_id': session_id,
+                        'tool_description': attrs.get('tool.description', None),
                     }
                 }
 
-                # Fire and forget
                 thread = threading.Thread(
                     target=_post_trace,
                     args=(self.endpoint, payload),
@@ -116,7 +161,7 @@ class ClientCodedExporter(SpanExporter if HAS_OTEL else object):
                 thread.start()
 
             except Exception:
-                pass  # Never break the customer's agent
+                pass
 
         return SpanExportResult.SUCCESS if HAS_OTEL else None
 
@@ -158,7 +203,7 @@ def init(agent_id=None, api_key=None, trace_url=None, frameworks=None):
     configure(agent_id, api_key, trace_url)
 
     if not _config['agent_id'] or not _config['api_key']:
-        return  # Silent fail
+        return
 
     if HAS_OTEL:
         _setup_otel()
@@ -187,7 +232,7 @@ def auto_instrument(frameworks=None):
     """
     Auto-instrument supported frameworks using OpenInference.
 
-    Supported frameworks (install the corresponding package):
+    Supported (install the corresponding package):
         pip install openinference-instrumentation-langchain
         pip install openinference-instrumentation-openai
         pip install openinference-instrumentation-anthropic
@@ -218,7 +263,6 @@ def auto_instrument(frameworks=None):
     }
 
     if frameworks is None:
-        # Try all available
         frameworks = list(instrumentors.keys())
 
     for framework in frameworks:
@@ -228,8 +272,6 @@ def auto_instrument(frameworks=None):
 
         try:
             module = __import__(module_path, fromlist=['Instrumentor'])
-            # OpenInference instrumentors follow the naming pattern:
-            # LangChainInstrumentor, OpenAIInstrumentor, etc.
             instrumentor_class = None
             for attr_name in dir(module):
                 obj = getattr(module, attr_name)
@@ -242,9 +284,9 @@ def auto_instrument(frameworks=None):
             if instrumentor_class:
                 instrumentor_class().instrument()
         except ImportError:
-            pass  # Framework instrumentor not installed
+            pass
         except Exception:
-            pass  # Already instrumented or other error
+            pass
 
 
 def trace(func=None, *, name=None):
@@ -254,10 +296,6 @@ def trace(func=None, *, name=None):
 
     Usage:
         @clientcoded.trace
-        def my_custom_tool(query):
-            return db.execute(query)
-
-        @clientcoded.trace(name="db_lookup")
         def my_custom_tool(query):
             return db.execute(query)
     """
@@ -270,16 +308,15 @@ def trace(func=None, *, name=None):
                 tracer = otel_trace.get_tracer('clientcoded')
                 with tracer.start_as_current_span(tool_name) as span:
                     span.set_attribute('openinference.span.kind', 'TOOL')
-                    span.set_attribute('input.value', _truncate(str(args) + str(kwargs)))
+                    span.set_attribute('input.value', _truncate_value((args, kwargs), str(args) + str(kwargs)))
                     try:
                         result = fn(*args, **kwargs)
-                        span.set_attribute('output.value', _truncate(str(result)))
+                        span.set_attribute('output.value', _truncate_value(result))
                         return result
                     except Exception as e:
                         span.set_status(otel_trace.StatusCode.ERROR, str(e))
                         raise
             else:
-                # Fallback: direct trace without OpenTelemetry
                 trace_id = str(uuid.uuid4())
                 start = time.time()
                 error = None
@@ -294,8 +331,8 @@ def trace(func=None, *, name=None):
                     _send_direct_trace(
                         trace_id=trace_id,
                         tool_name=tool_name,
-                        input_data=str(args),
-                        output_data=str(result) if result else None,
+                        input_data=_truncate_value(args),
+                        output_data=_truncate_value(result) if result else None,
                         error=error,
                         latency_ms=int((time.time() - start) * 1000)
                     )
@@ -317,10 +354,10 @@ def trace_async(func=None, *, name=None):
                 tracer = otel_trace.get_tracer('clientcoded')
                 with tracer.start_as_current_span(tool_name) as span:
                     span.set_attribute('openinference.span.kind', 'TOOL')
-                    span.set_attribute('input.value', _truncate(str(args) + str(kwargs)))
+                    span.set_attribute('input.value', _truncate_value((args, kwargs), str(args) + str(kwargs)))
                     try:
                         result = await fn(*args, **kwargs)
-                        span.set_attribute('output.value', _truncate(str(result)))
+                        span.set_attribute('output.value', _truncate_value(result))
                         return result
                     except Exception as e:
                         span.set_status(otel_trace.StatusCode.ERROR, str(e))
@@ -340,8 +377,8 @@ def trace_async(func=None, *, name=None):
                     _send_direct_trace(
                         trace_id=trace_id,
                         tool_name=tool_name,
-                        input_data=str(args),
-                        output_data=str(result) if result else None,
+                        input_data=_truncate_value(args),
+                        output_data=_truncate_value(result) if result else None,
                         error=error,
                         latency_ms=int((time.time() - start) * 1000)
                     )
@@ -359,17 +396,17 @@ def log_trace(tool_name, input_data=None, output_data=None, error=None, latency_
         with tracer.start_as_current_span(tool_name) as span:
             span.set_attribute('openinference.span.kind', 'TOOL')
             if input_data:
-                span.set_attribute('input.value', _truncate(str(input_data)))
+                span.set_attribute('input.value', _truncate_value(input_data))
             if output_data:
-                span.set_attribute('output.value', _truncate(str(output_data)))
+                span.set_attribute('output.value', _truncate_value(output_data))
             if error:
                 span.set_status(otel_trace.StatusCode.ERROR, error)
     else:
         _send_direct_trace(
             trace_id=str(uuid.uuid4()),
             tool_name=tool_name,
-            input_data=str(input_data) if input_data else None,
-            output_data=str(output_data) if output_data else None,
+            input_data=_truncate_value(input_data) if input_data else None,
+            output_data=_truncate_value(output_data) if output_data else None,
             error=error,
             latency_ms=latency_ms
         )
@@ -416,8 +453,8 @@ def _send_direct_trace(trace_id, tool_name, input_data, output_data, error, late
         'error': error,
         'latency_ms': latency_ms,
         'timestamp': time.time(),
-        'test_run_id': get_test_context().get('test_run_id'),
-        'question_index': get_test_context().get('question_index'),
+        'test_run_id': (get_test_context() or {}).get('test_run_id'),
+        'question_index': (get_test_context() or {}).get('question_index'),
     }
 
     thread = threading.Thread(
@@ -429,16 +466,68 @@ def _send_direct_trace(trace_id, tool_name, input_data, output_data, error, late
 
 
 def _post_trace(endpoint, payload):
-    """Send trace to ClientCoded. Silent failure."""
+    """Send trace to ClientCoded. Never raises into the customer's agent.
+    Logs one warning per rejection reason (bad key, wrong agent, rate
+    limit) so a misconfiguration is visible instead of silent."""
     try:
-        requests.post(endpoint, json=payload, timeout=2)
+        r = requests.post(endpoint, json=payload, timeout=5)
+        if r.status_code >= 400:
+            try:
+                msg = r.json().get('message') or r.text[:200]
+            except Exception:
+                msg = r.text[:200]
+            key = (r.status_code, msg)
+            if key not in _warned:
+                _warned.add(key)
+                _log.warning("ClientCoded rejected a trace (%s): %s", r.status_code, msg)
     except Exception:
         pass
 
 
-def _truncate(s, max_len=2000):
+MAX_TRACE_CHARS = 2000
+
+
+def _describe(obj):
+    """Short size summary for lists/results, e.g. '128 rows'."""
+    try:
+        if isinstance(obj, (list, tuple, set)):
+            return "{:,} items".format(len(obj))
+        if isinstance(obj, dict):
+            if isinstance(obj.get('rows_returned'), int):
+                return "{:,} rows".format(obj['rows_returned'])
+            for k in ('result', 'results', 'rows', 'data', 'items', 'records', 'documents'):
+                v = obj.get(k)
+                if isinstance(v, (list, tuple)):
+                    return "{:,} {}".format(len(v), 'rows' if k in ('result', 'results', 'rows', 'records') else 'items')
+    except Exception:
+        pass
+    return None
+
+
+def _truncate_value(obj, text=None, max_len=MAX_TRACE_CHARS):
+    """str() an object for a trace, cutting it to max_len and saying how
+    big it really was (characters, and items/rows for lists and results)."""
+    s = text if text is not None else str(obj)
+    if not s or len(s) <= max_len:
+        return s
+    desc = _describe(obj)
+    if desc is None and isinstance(obj, tuple) and obj:
+        # (args, kwargs) or args: describe the first list-like argument
+        for part in obj:
+            desc = _describe(part)
+            if desc:
+                break
+    note = "%s characters" % format(len(s), ',')
+    if desc:
+        note += ", " + desc
+    return s[:max_len] + "... (truncated: " + note + ")"
+
+
+def _truncate(s, max_len=MAX_TRACE_CHARS):
     if not s:
         return s
     if len(s) > max_len:
-        return s[:max_len] + '... (truncated)'
+        if '... (truncated' in s[max_len - 120:]:
+            return s  # already shortened with a size note; keep the note
+        return s[:max_len] + "... (truncated: %s characters)" % format(len(s), ',')
     return s
